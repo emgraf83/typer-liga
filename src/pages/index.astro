@@ -1,0 +1,237 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getProfile, getSupabaseFromRequest } from '../lib/auth.js';
+import { calcPoints } from '../lib/scoring.js';
+import { createClient } from '@supabase/supabase-js';
+
+const profile = await getProfile(Astro.request);
+
+// Publiczny klient dla gości, sesyjny dla zalogowanych
+const sb = profile
+  ? getSupabaseFromRequest(Astro.request)
+  : createClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
+
+const { data: matches } = await sb
+  .from('matches')
+  .select('id, score_home, score_away')
+  .eq('status', 'finished');
+
+const matchIds = (matches ?? []).map(m => m.id);
+const { data: preds } = matchIds.length
+  ? await sb.from('predictions').select('match_id, user_id, pred_home, pred_away').in('match_id', matchIds)
+  : { data: [] };
+
+const { data: players } = await sb
+  .from('profiles')
+  .select('id, nick')
+  .eq('role', 'user')
+  .order('nick');
+
+const stats = (players ?? []).map(p => {
+  let pts = 0, exact = 0, direction = 0;
+  for (const m of matches ?? []) {
+    const pred = (preds ?? []).find(pr => pr.match_id === m.id && pr.user_id === p.id);
+    if (!pred) continue;
+    const got = calcPoints(pred.pred_home, pred.pred_away, m.score_home, m.score_away);
+    pts += got;
+    if (got === 3) exact++;
+    if (got === 1) direction++;
+  }
+  return { ...p, pts, exact, direction };
+});
+
+stats.sort((a, b) => b.pts - a.pts || b.exact - a.exact);
+---
+<Layout title="Ranking" user={profile}>
+
+  <!-- HERO -->
+  <div class="hero-wrap">
+    <div class="hero">
+      <img src="/header.jpg" alt="HL Mando" class="hero-img" />
+      <div class="hero-overlay">
+        <div class="hero-content">
+          <div class="hero-title">TYPER<br/><span class="hero-accent">HL MANDO</span></div>
+          <div class="hero-sub">Liga typowania znajomych</div>
+          {!profile && (
+            <a href="/login" class="btn btn-primary hero-btn">Zaloguj się i typuj →</a>
+          )}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RANKING -->
+  <div class="page narrow">
+    <div class="section-title">🏆 Tabela Rankingowa</div>
+
+    <div class="scoring-info">
+      <span>⭐ <strong>3 pkt</strong> – dokładny wynik</span>
+      <span>✓ <strong>1 pkt</strong> – właściwy kierunek</span>
+      <span>✗ <strong>0 pkt</strong> – pudło</span>
+    </div>
+
+    {stats.length === 0 ? (
+      <div class="empty">
+        <div class="empty-icon">📊</div>
+        <p>Wyniki pojawią się po zakończeniu pierwszego meczu.</p>
+      </div>
+    ) : (
+      <div class="table-wrap">
+        <table class="ranking">
+          <thead>
+            <tr>
+              <th class="col-pos">Poz.</th>
+              <th>Gracz</th>
+              <th>Dokładne ⭐</th>
+              <th>Kierunek ✓</th>
+              <th>Punkty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.map((s, i) => {
+              const pos = i + 1;
+              const medals = ['🥇','🥈','🥉'];
+              return (
+                <tr class={`row row-${Math.min(pos, 4)}`}>
+                  <td class="col-pos"><span class="pos-num">{pos}</span></td>
+                  <td>
+                    <div class="player-cell">
+                      <div class="p-avatar">{s.nick[0].toUpperCase()}</div>
+                      <span class="p-nick">{s.nick}</span>
+                      {pos <= 3 && <span class="medal">{medals[pos-1]}</span>}
+                      {s.exact > 0 && <span class="star-icon" title={`${s.exact} dokładnych trafień`}>⭐</span>}
+                    </div>
+                  </td>
+                  <td><span class="chip chip-green">{s.exact}</span></td>
+                  <td><span class="chip chip-muted">{s.direction}</span></td>
+                  <td><span class="pts-badge">{s.pts} pkt</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+</Layout>
+
+<style>
+/* ── Hero ── */
+.hero-wrap {
+  max-width: 860px;
+  margin: 40px auto 0;
+  padding: 0 20px;
+}
+.hero {
+  position: relative;
+  width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,.6);
+}
+.hero-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 460px;
+  object-fit: cover;
+  object-position: center 15%;
+}
+.hero-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(7,9,15,0)    0%,
+    rgba(7,9,15,.15) 45%,
+    rgba(7,9,15,.80) 78%,
+    rgba(7,9,15,1)  100%
+  );
+  display: flex; align-items: flex-end;
+  padding: 0 32px 36px;
+}
+.hero-content { max-width: 600px; }
+.hero-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(48px, 7vw, 82px);
+  line-height: .92; letter-spacing: 3px;
+  color: #fff;
+  text-shadow: 0 4px 32px rgba(0,0,0,.7);
+}
+.hero-accent {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  font-size: 13px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: rgba(255,255,255,.55); margin: 10px 0 22px;
+}
+.hero-btn { font-size: 15px; padding: 13px 28px; }
+
+/* ── Ranking ── */
+.scoring-info {
+  display: flex; gap: 20px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 20px;
+  font-size: 13px; margin-bottom: 24px;
+}
+.scoring-info strong { color: var(--accent); }
+
+.table-wrap { overflow-x: auto; }
+
+.ranking {
+  width: 100%; border-collapse: collapse;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.ranking th {
+  background: var(--surface2); padding: 12px 16px;
+  text-align: left; font-size: 10px; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--muted); font-weight: 600;
+}
+.ranking td { padding: 15px 16px; border-top: 1px solid var(--border); }
+.ranking tbody tr { transition: background .15s; }
+.ranking tbody tr:hover { background: rgba(255,255,255,.02); }
+
+.col-pos { width: 52px; text-align: center; }
+.pos-num { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--muted); }
+.row-1 .pos-num { color: var(--gold); }
+.row-2 .pos-num { color: var(--silver); }
+.row-3 .pos-num { color: var(--bronze); }
+.row-1 { background: rgba(255,215,0,.04)   !important; }
+.row-2 { background: rgba(192,192,192,.03) !important; }
+.row-3 { background: rgba(205,127,50,.03)  !important; }
+
+.player-cell { display: flex; align-items: center; gap: 10px; }
+.p-avatar {
+  width: 30px; height: 30px; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #000;
+}
+.p-nick { font-weight: 500; font-size: 15px; }
+.medal { font-size: 18px; }
+.star-icon { font-size: 14px; }
+
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 20px; padding: 3px 12px; font-size: 13px; font-weight: 600;
+}
+.chip-green { background: rgba(0,230,118,.1); color: var(--green); border: 1px solid rgba(0,230,118,.25); }
+.chip-muted { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+.pts-badge {
+  display: inline-flex; align-items: center;
+  background: rgba(0,212,255,.1); color: var(--accent);
+  border: 1px solid rgba(0,212,255,.25);
+  border-radius: 20px; padding: 4px 14px;
+  font-size: 14px; font-weight: 600;
+}
+
+.empty { text-align: center; padding: 70px 20px; color: var(--muted); }
+.empty-icon { font-size: 52px; margin-bottom: 14px; }
+
+.narrow { max-width: 860px; }
+</style>

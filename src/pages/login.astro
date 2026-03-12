@@ -1,0 +1,70 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getProfile } from '../lib/auth.js';
+
+const profile = await getProfile(Astro.request);
+if (profile) return Astro.redirect('/');
+
+const error = Astro.url.searchParams.get('error');
+const errorMessages: Record<string, string> = {
+  invalid:  'Nieprawidłowy email lub hasło.',
+  required: 'Podaj email i hasło.',
+};
+---
+<Layout title="Logowanie">
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="logo">⚽</div>
+      <h1 class="brand">TYPER LIGA</h1>
+      <p class="brand-sub">Liga znajomych</p>
+
+      {error && <div class="alert alert-error">{errorMessages[error] ?? 'Wystąpił błąd.'}</div>}
+
+      <form method="POST" action="/api/login">
+        <div class="field">
+          <label>Email</label>
+          <input type="email" name="email" placeholder="jan@example.com" required autofocus />
+        </div>
+        <div class="field">
+          <label>Hasło</label>
+          <input type="password" name="password" placeholder="••••••••" required />
+        </div>
+        <button class="btn btn-primary btn-full" type="submit">Zaloguj się →</button>
+      </form>
+    </div>
+  </div>
+</Layout>
+
+<style>
+.login-wrap {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 20px;
+}
+.login-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 48px 40px;
+  width: 100%; max-width: 420px;
+  position: relative; overflow: hidden;
+}
+.login-box::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+.logo { font-size: 52px; text-align: center; margin-bottom: 4px; }
+.brand {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 38px; letter-spacing: 3px; text-align: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.brand-sub {
+  text-align: center; color: var(--muted);
+  font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+  margin-bottom: 36px;
+}
+</style>

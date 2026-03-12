@@ -1,0 +1,208 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getProfile, getSupabaseFromRequest } from '../lib/auth.js';
+import { calcPoints } from '../lib/scoring.js';
+
+const profile = await getProfile(Astro.request);
+if (!profile) return Astro.redirect('/login');
+
+const sb = getSupabaseFromRequest(Astro.request);
+
+const { data: matches } = await sb
+  .from('matches')
+  .select('*')
+  .order('kick_off', { ascending: true });
+
+const matchIds = (matches ?? []).map(m => m.id);
+const { data: allPreds } = matchIds.length
+  ? await sb.from('predictions').select('match_id, user_id, pred_home, pred_away').in('match_id', matchIds)
+  : { data: [] };
+
+const { data: players } = await sb
+  .from('profiles')
+  .select('id, nick')
+  .eq('role', 'user');
+
+const playerMap = Object.fromEntries((players ?? []).map(p => [p.id, p.nick]));
+
+function isStarted(m) {
+  if (m.status !== 'upcoming') return true;
+  return new Date() >= new Date(m.kick_off);
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleString('pl-PL', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+
+const statusLabel = { upcoming: 'Nadchodzący', live: 'Na żywo', finished: 'Zakończony' };
+const statusClass = { upcoming: 'pill-upcoming', live: 'pill-live', finished: 'pill-finished' };
+---
+<Layout title="Mecze" user={profile}>
+  <div class="page">
+    <div class="section-title">⚽ Mecze</div>
+
+    {(!matches || matches.length === 0) && (
+      <div class="empty">
+        <div class="empty-icon">📅</div>
+        <p>Brak zaplanowanych meczów.</p>
+      </div>
+    )}
+
+    <div class="matches">
+      {(matches ?? []).map(m => {
+        const mPreds = (allPreds ?? []).filter(p => p.match_id === m.id);
+        const myPred = mPreds.find(p => p.user_id === profile.id);
+        const started = isStarted(m);
+        const finished = m.status === 'finished';
+        const isAdmin  = profile.role === 'admin';
+
+        return (
+          <div class="match-card">
+            {/* Header */}
+            <div class="match-head">
+              <div>
+                <div class="teams">
+                  {m.home_team}
+                  <span class="vs">vs</span>
+                  {m.away_team}
+                </div>
+                <div class="match-date">{fmtDate(m.kick_off)}</div>
+              </div>
+              <div class="match-right">
+                {finished && (
+                  <div class="final-score">{m.score_home} : {m.score_away}</div>
+                )}
+                <span class={`pill ${statusClass[m.status]}`}>{statusLabel[m.status]}</span>
+              </div>
+            </div>
+
+            {/* Predictions list (visible after match or to admin) */}
+            {(finished || isAdmin) && mPreds.length > 0 && (
+              <div class="preds-section">
+                <div class="preds-label">Typy uczestników</div>
+                <div class="preds-chips">
+                  {mPreds.map(p => {
+                    const nick = playerMap[p.user_id] ?? '?';
+                    const pts = finished ? calcPoints(p.pred_home, p.pred_away, m.score_home, m.score_away) : null;
+                    const cls = pts === 3 ? 'chip-correct' : pts === 0 ? 'chip-wrong' : pts === 1 ? 'chip-partial' : '';
+                    const icon = pts === 3 ? '⭐' : pts === 1 ? '✓' : pts === 0 ? '✗' : '';
+                    return (
+                      <div class={`pred-chip ${cls}`}>
+                        {icon && <span>{icon}</span>}
+                        <strong>{nick}</strong>
+                        <span>{p.pred_home}:{p.pred_away}</span>
+                        {pts !== null && <span class="chip-pts">{pts}pkt</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* My prediction form (user only) */}
+            {profile.role === 'user' && (
+              <div class="my-section">
+                {!started && (
+                  <form method="POST" action="/api/predict" class="pred-form">
+                    <input type="hidden" name="match_id" value={m.id} />
+                    <div class="pred-form-label">
+                      {myPred ? '✏️ Zmień swój typ' : '🎯 Podaj typ'}
+                    </div>
+                    <div class="pred-inputs">
+                      <input class="score-input" type="number" name="pred_home" min="0" max="20"
+                        value={myPred?.pred_home ?? ''} placeholder="0" required />
+                      <span class="score-sep">:</span>
+                      <input class="score-input" type="number" name="pred_away" min="0" max="20"
+                        value={myPred?.pred_away ?? ''} placeholder="0" required />
+                      <button class="btn btn-success btn-sm" type="submit">Zapisz</button>
+                    </div>
+                  </form>
+                )}
+
+                {started && myPred && (
+                  <div class="my-pred-display">
+                    <span class="my-pred-label">Twój typ</span>
+                    <span class="my-pred-score">{myPred.pred_home} : {myPred.pred_away}</span>
+                    {finished && (() => {
+                      const pts = calcPoints(myPred.pred_home, myPred.pred_away, m.score_home, m.score_away);
+                      return <span class={`pts-pill pts-${pts}`}>{pts === 3 ? '⭐' : pts === 1 ? '✓' : '✗'} {pts} pkt</span>;
+                    })()}
+                    {!finished && <span class="locked-msg">🔒 Mecz się rozpoczął</span>}
+                  </div>
+                )}
+
+                {started && !myPred && (
+                  <div class="no-pred">🔒 Mecz się rozpoczął — nie podałeś/aś typu</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  </div>
+</Layout>
+
+<style>
+.matches { display: flex; flex-direction: column; gap: 14px; }
+
+.match-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 22px 24px;
+  transition: border-color .2s;
+}
+.match-card:hover { border-color: rgba(0,212,255,.25); }
+
+.match-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+}
+.teams {
+  font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px;
+}
+.vs { color: var(--muted); font-size: 15px; margin: 0 10px; }
+.match-date { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.match-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.final-score {
+  font-family: 'Bebas Neue', sans-serif; font-size: 34px;
+  color: var(--gold); letter-spacing: 4px;
+}
+
+/* Predictions */
+.preds-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.preds-label { font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.preds-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.pred-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 5px 12px; font-size: 12px;
+}
+.chip-correct { background: rgba(0,230,118,.1); border-color: rgba(0,230,118,.3); color: var(--green); }
+.chip-partial  { background: rgba(0,212,255,.08); border-color: rgba(0,212,255,.25); color: var(--accent); }
+.chip-wrong    { background: rgba(255,77,77,.06);  border-color: rgba(255,77,77,.2);  color: var(--muted); }
+.chip-pts { font-weight: 700; margin-left: 2px; }
+
+/* My section */
+.my-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.pred-form-label { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.pred-inputs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.my-pred-display { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.my-pred-label { font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); }
+.my-pred-score { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 3px; }
+
+.pts-pill {
+  border-radius: 20px; padding: 4px 12px; font-size: 13px; font-weight: 600;
+}
+.pts-3 { background: rgba(0,230,118,.12); color: var(--green); border: 1px solid rgba(0,230,118,.3); }
+.pts-1 { background: rgba(0,212,255,.1);  color: var(--accent); border: 1px solid rgba(0,212,255,.25); }
+.pts-0 { background: rgba(255,77,77,.08); color: var(--red);   border: 1px solid rgba(255,77,77,.25); }
+
+.locked-msg { color: var(--muted); font-size: 12px; }
+.no-pred { color: var(--muted); font-size: 13px; }
+
+.empty { text-align: center; padding: 70px 20px; color: var(--muted); }
+.empty-icon { font-size: 52px; margin-bottom: 14px; }
+</style>

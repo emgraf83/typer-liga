@@ -1,0 +1,193 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { getProfile, getSupabaseFromRequest } from '../lib/auth.js';
+
+const profile = await getProfile(Astro.request);
+if (!profile || profile.role !== 'admin') return Astro.redirect('/');
+
+const sb = getSupabaseFromRequest(Astro.request);
+
+const { data: matches } = await sb
+  .from('matches')
+  .select('*')
+  .order('kick_off', { ascending: true });
+
+const { data: users } = await sb
+  .from('profiles')
+  .select('id, nick, role')
+  .eq('role', 'user')
+  .order('nick');
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleString('pl-PL', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+const statusLabel = { upcoming: '⏳ Nadchodzący', live: '🔴 Na żywo', finished: '✅ Zakończony' };
+
+const error = Astro.url.searchParams.get('error');
+const errorMsg: Record<string, string> = {
+  fields: 'Wypełnij wszystkie pola.',
+  user_exists: 'Użytkownik już istnieje.',
+};
+---
+<Layout title="Admin" user={profile}>
+  <div class="page">
+    <div class="section-title">⚙️ Panel Admina</div>
+
+    {error && <div class="alert alert-error">{errorMsg[error] ?? 'Wystąpił błąd.'}</div>}
+
+    <!-- ADD MATCH -->
+    <div class="card admin-card">
+      <h3>➕ Dodaj nowy mecz</h3>
+      <form method="POST" action="/api/admin/add-match" class="add-form">
+        <div class="field">
+          <label>Gospodarz</label>
+          <input type="text" name="home" placeholder="np. Polska" required />
+        </div>
+        <div class="field">
+          <label>Gość</label>
+          <input type="text" name="away" placeholder="np. Niemcy" required />
+        </div>
+        <div class="field">
+          <label>Data i godzina</label>
+          <input type="datetime-local" name="kick_off" />
+        </div>
+        <button class="btn btn-success" type="submit">Dodaj mecz</button>
+      </form>
+    </div>
+
+    <!-- MANAGE MATCHES -->
+    <div class="card admin-card">
+      <h3>📋 Zarządzaj meczami</h3>
+      {(!matches || matches.length === 0) ? (
+        <p class="muted" style="font-size:13px">Brak meczów.</p>
+      ) : (
+        <div class="match-list">
+          {(matches ?? []).map(m => (
+            <div class="m-row">
+              <div class="m-info">
+                <strong>{m.home_team} vs {m.away_team}</strong>
+                <span class="muted" style="font-size:12px">{fmtDate(m.kick_off)} · {statusLabel[m.status]}{m.status==='finished' ? ` · ${m.score_home}:${m.score_away}` : ''}</span>
+              </div>
+              <div class="m-actions">
+                <!-- Status buttons -->
+                <form method="POST" action="/api/admin/update-match" style="display:inline">
+                  <input type="hidden" name="id" value={m.id} />
+                  <input type="hidden" name="status" value="upcoming" />
+                  <button class="btn btn-ghost btn-sm" type="submit">⏳</button>
+                </form>
+                <form method="POST" action="/api/admin/update-match" style="display:inline">
+                  <input type="hidden" name="id" value={m.id} />
+                  <input type="hidden" name="status" value="live" />
+                  <button class="btn btn-ghost btn-sm" type="submit">🔴</button>
+                </form>
+
+                <!-- Result form -->
+                <form method="POST" action="/api/admin/update-match" class="result-form">
+                  <input type="hidden" name="id" value={m.id} />
+                  <input class="score-input" type="number" name="score_home" min="0" max="30"
+                    value={m.score_home ?? ''} placeholder="0"
+                    style="width:48px;height:36px;font-size:20px" />
+                  <span class="score-sep" style="font-size:20px">:</span>
+                  <input class="score-input" type="number" name="score_away" min="0" max="30"
+                    value={m.score_away ?? ''} placeholder="0"
+                    style="width:48px;height:36px;font-size:20px" />
+                  <button class="btn btn-success btn-sm" type="submit">✅ Wynik</button>
+                </form>
+
+                <!-- Delete -->
+                <form method="POST" action="/api/admin/delete-match" style="display:inline"
+                  onsubmit="return confirm('Usunąć mecz?')">
+                  <input type="hidden" name="id" value={m.id} />
+                  <button class="btn btn-danger btn-sm" type="submit">🗑</button>
+                </form>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+
+    <!-- MANAGE USERS -->
+    <div class="card admin-card">
+      <h3>👤 Uczestnicy</h3>
+      <form method="POST" action="/api/admin/add-user" class="add-form" style="margin-bottom:24px">
+        <div class="field">
+          <label>Nick</label>
+          <input type="text" name="nick" placeholder="jan_kowalski" required />
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" name="email" placeholder="jan@example.com" required />
+        </div>
+        <div class="field">
+          <label>Hasło startowe</label>
+          <input type="password" name="password" placeholder="min. 6 znaków" required minlength="6" />
+        </div>
+        <button class="btn btn-success" type="submit">Dodaj uczestnika</button>
+      </form>
+
+      {(!users || users.length === 0) ? (
+        <p class="muted" style="font-size:13px">Brak uczestników.</p>
+      ) : (
+        <div class="users-list">
+          {(users ?? []).map(u => (
+            <div class="u-row">
+              <div class="user-cell">
+                <div class="avatar">{u.nick[0].toUpperCase()}</div>
+                <span>{u.nick}</span>
+              </div>
+              <form method="POST" action="/api/admin/delete-user"
+                onsubmit={`return confirm('Usunąć gracza ${u.nick}?')`}>
+                <input type="hidden" name="user_id" value={u.id} />
+                <button class="btn btn-danger btn-sm" type="submit">Usuń</button>
+              </form>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+</Layout>
+
+<style>
+.admin-card { margin-bottom: 20px; }
+.admin-card h3 {
+  font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px;
+  color: var(--accent2); margin-bottom: 18px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+
+.add-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.add-form .field { flex: 1; min-width: 140px; margin-bottom: 0; }
+.add-form .btn { flex-shrink: 0; align-self: flex-end; }
+
+.match-list { display: flex; flex-direction: column; gap: 10px; }
+
+.m-row {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+}
+.m-info { display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.m-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.result-form { display: flex; align-items: center; gap: 6px; }
+
+.users-list { display: flex; flex-direction: column; gap: 8px; }
+.u-row {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 11px 14px;
+}
+.user-cell { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.avatar {
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #000; flex-shrink: 0;
+}
+</style>

@@ -1,0 +1,115 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  user?: { email: string; nick: string; role: string } | null;
+}
+
+const { title = 'Typer HL Mando', user } = Astro.props;
+---
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} — Typer HL Mando ⚽</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>" />
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="/" class="nav-logo">⚽ HL MANDO</a>
+  <div class="nav-links">
+    <a href="/" class="nav-link">🏆 Ranking</a>
+    {user && <a href="/mecze" class="nav-link">⚽ Mecze</a>}
+    {user?.role === 'admin' && <a href="/admin" class="nav-link nav-admin">⚙️ Admin</a>}
+  </div>
+  <div class="nav-right">
+    {user ? (
+      <>
+        <div class="user-chip">
+          <div class="avatar">{user.nick[0].toUpperCase()}</div>
+          <span>{user.nick}</span>
+          {user.role === 'admin' && <span class="badge-admin">Admin</span>}
+        </div>
+        <form method="POST" action="/api/logout">
+          <button class="btn btn-ghost btn-sm" type="submit">Wyloguj</button>
+        </form>
+      </>
+    ) : (
+      <a href="/login" class="btn btn-primary btn-sm">Zaloguj się →</a>
+    )}
+  </div>
+</nav>
+
+<slot />
+
+</body>
+</html>
+
+<style>
+.navbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 62px;
+  position: sticky; top: 0; z-index: 200;
+}
+
+.nav-logo {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 26px; letter-spacing: 2px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  flex-shrink: 0;
+}
+
+.nav-links { display: flex; gap: 4px; }
+
+.nav-link {
+  padding: 7px 14px;
+  border-radius: 7px;
+  font-size: 13px; font-weight: 500;
+  color: var(--muted);
+  transition: all .15s;
+}
+.nav-link:hover { color: var(--text); background: var(--surface2); }
+.nav-admin { color: var(--accent2) !important; }
+
+.nav-right { display: flex; align-items: center; gap: 12px; }
+
+.user-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 14px 5px 6px;
+  font-size: 13px;
+}
+.avatar {
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #000;
+  flex-shrink: 0;
+}
+.badge-admin {
+  background: rgba(255,107,53,.2);
+  color: var(--accent2);
+  border: 1px solid rgba(255,107,53,.35);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase; font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .nav-links { display: none; }
+  .navbar { padding: 0 14px; }
+}
+</style>
